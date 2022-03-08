@@ -1,6 +1,7 @@
 import argparse
 import csv
 import logging
+import re
 import requests
 import time
 
@@ -41,7 +42,7 @@ def openfile(filepath):
     return content
 
 
-def process_links(links):
+def process_game_cell_links(links):
     games = []
     llinks = len(links)
     for i, link in enumerate(links):
@@ -58,6 +59,10 @@ def process_links(links):
             rating = float(rating_soup.attrs['title'])
         except AttributeError:
             rating = ''
+        try:
+            tag_list = [otag.contents[0].lower() for otag in soup.find_all('a', href=re.compile(r'tag'))]
+        except (TypeError, AttributeError):
+            tag_list = []
         games.append(
             {
                 'index': i,
@@ -67,32 +72,55 @@ def process_links(links):
                 'rating': rating,
                 'desc': link.get('desc'),
                 'link': link.get('link'),
+                'tags': tag_list,
             }
         )
         time.sleep(1)
     return games
 
 
-def export_csv(content, filename='games.csv'):
-    headers = list(content[0].keys())
+def unpack_tags(games):
+    settags = {tag for game in games for tag in game.get('tags', [])}
+    for game in games:
+        #  game.update(dtags)
+        for tag in game.get('tags'):
+            game[tag] = 'x'
+        game.pop('tags', None)
+    lst = list(settags)
+    lst.sort()
+    with open('tags', 'w') as tagfile:
+        for tag in lst:
+            tagfile.writelines(f'{tag}\n')
+    return games, lst
+
+
+def export_csv(games_content, filename='games.csv'):
+    filepath = Path(filename)
+    if filepath.is_file():
+        filepath.unlink()
+    headers_o = list(games_content[0].keys())
+    upcontent, headers_t = unpack_tags(games_content)
+    headers_o.remove('tags')
+    headers = headers_o + headers_t
     with open(filename, 'w') as csvfile:
         writer = csv.DictWriter(csvfile, delimiter="←", fieldnames=headers)
         writer.writeheader()
-        writer.writerows(content)
+        writer.writerows(upcontent)
 
 
 def parse_game_cells(gamecells):
     links = []
-    for cell in gamecells:
+    for i, cell in enumerate(gamecells):
         title = cell.find('a', class_='title')
         title = title.contents[0] if title else ''
         author = cell.find('a', class_='user_link')
-        author = author.contents[0]
+        author = author.contents[0] if author else ''
         desc = cell.find('div', class_='short_text')
         desc = desc.contents[0] if desc else ''
         link = cell.a.attrs['href']
         links.append(
             {
+                'index': i,
                 'title': title,
                 'author': author,
                 'desc': desc,
@@ -102,31 +130,28 @@ def parse_game_cells(gamecells):
     return links
 
 
-def process(**kwargs):
-    content = kwargs.get('content')
-    if not content:
-        logger.error('No content detected')
-        return None
-
+def process_content(content):
     soup = BeautifulSoup(content, 'html.parser')
     gamecells = soup.find_all('div', class_='game_cell')
     links = parse_game_cells(gamecells)
     logger.info(f'Found {len(links)} links')
-    games = process_links(links)
+    games = process_game_cell_links(links)
     return games
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('data_source', metavar='DATASOURCE', type=str, help='Data source')
+    parser.add_argument('data_source', metavar='DATASOURCE', type=str, help='Data source (URL or HTML file)')
+    parser.add_argument(
+        'export_csv', metavar='CSVNAME', nargs='?', type=str, help='Result CSV file', default='games.csv'
+    )
     known_args, other_args = parser.parse_known_args()
 
     argsource = known_args.data_source
+    csvfile = known_args.export_csv
 
     content = get_source(argsource)
 
-    dargs = {'content': content}
+    games = process_content(content)
 
-    games = process(**dargs)
-
-    export_csv(games)
+    export_csv(games, filename=csvfile)
