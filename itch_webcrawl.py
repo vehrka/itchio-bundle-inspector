@@ -61,7 +61,7 @@ def process_game_cell_links(links):
             rating = ''
         try:
             tag_list = [otag.contents[0].lower() for otag in soup.find_all('a', href=re.compile(r'tag'))]
-        except (TypeError, AttributeError):
+        except (TypeError, AttributeError, IndexError):
             tag_list = []
         games.append(
             {
